@@ -57,7 +57,7 @@
     "url": "https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-URLs-e-mais-/issues"
   },
   "homepage": "https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-URLs-e-mais-#readme",
-  "peerDependencies": {
+  "dependencies": {
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
