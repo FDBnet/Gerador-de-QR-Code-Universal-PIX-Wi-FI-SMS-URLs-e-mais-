@@ -3,6 +3,12 @@
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [2.1.1] — 2026-04-13
+
+### Alterado
+
+- `qrcode` movido de peerDependencies para dependencies — instalação com um único comando.
+
 ## [2.1.0] — 2026-04-13
 
 ### Adicionado
@@ -20,6 +26,13 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 - Detecção de CPF formatado (com pontos/hífens) agora funciona corretamente.
 - TypeScript declarations expandidas com interfaces para todos os novos retornos.
+
+## [2.0.1] — 2026-04-13
+
+### Corrigido
+
+- Correção de arquivos ausentes na publicação npm (d.ts, testes).
+- Workflow de CI/CD adicionado ao repositório.
 
 ## [2.0.0] — 2026-04-13
 
