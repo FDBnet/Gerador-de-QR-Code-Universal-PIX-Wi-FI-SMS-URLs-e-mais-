@@ -3,6 +3,24 @@
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [2.1.0] — 2026-04-13
+
+### Adicionado
+
+- **Validação de chave PIX** (`validarChavePix`): CPF com dígitos verificadores (algoritmo Receita Federal), CNPJ com dígitos verificadores, e-mail (regex + limite 77 chars), telefone (10-13 dígitos, +55), EVP (UUID v4 strict).
+- **Detecção automática de tipo** (`detectarTipoChave`): recebe qualquer string → retorna `'cpf'` | `'cnpj'` | `'email'` | `'telefone'` | `'evp'` | `null`.
+- **Decodificador EMV** (`decodificarPix`): payload Pix Copia e Cola → objeto com chave, valor, beneficiário, cidade, txid, descrição, CRC16, tipo de chave detectado.
+- **Validação de payload EMV** (`validarPayloadPix`): verifica estrutura TLV, campos obrigatórios (52, 53, 58, 59, 60), tamanhos máximos, CRC16. Retorna lista de erros.
+- **Normalização de chave** (`normalizarChavePix`): CPF/CNPJ → só dígitos; telefone → `+55...`; e-mail → lowercase; EVP → lowercase.
+- **Integração automática**: `formatarPixEstatico` agora valida e normaliza a chave antes de gerar. Chave inválida → `throw Error`.
+- **Validação de payload bruto**: payloads EMV passados via string ou `{ dadosEmv }` / `{ payload }` são validados antes de aceitar.
+- **83 testes** (era 80): CPF/CNPJ com dígitos verificadores, detecção, normalização, roundtrip (gerar → decodificar → comparar).
+
+### Alterado
+
+- Detecção de CPF formatado (com pontos/hífens) agora funciona corretamente.
+- TypeScript declarations expandidas com interfaces para todos os novos retornos.
+
 ## [2.0.0] — 2026-04-13
 
 ### Adicionado
