@@ -1,5 +1,5 @@
 /**
- * gerarQrCode.js — v2.0.0
+ * gerarQrCode.js — v2.1.0
  * Gerador de QR Code Universal
  */
 
@@ -65,26 +65,64 @@ export interface DadosContato {
     site?: string;
 }
 
-/**
- * Gera um QR Code em um elemento HTML.
- * @returns true se renderizado com sucesso
- */
+export type TipoChavePix = 'cpf' | 'cnpj' | 'email' | 'telefone' | 'evp';
+
+export interface ResultadoValidacaoChave {
+    valida: boolean;
+    tipo: TipoChavePix | null;
+    erro: string | null;
+    chaveNormalizada: string;
+}
+
+export interface ResultadoDecodificacao {
+    valido: boolean;
+    erro: string | null;
+    formatIndicator: string | null;
+    pontoIniciacao: string | null;
+    chave: string | null;
+    tipoChave: TipoChavePix | null;
+    descricao: string | null;
+    urlDinamica: string | null;
+    mcc: string | null;
+    moeda: string | null;
+    valor: number | null;
+    pais: string | null;
+    beneficiario: string | null;
+    cidade: string | null;
+    identificador: string | null;
+    crcInformado: string | null;
+    crcCalculado: string | null;
+    crcValido: boolean;
+}
+
+export interface ResultadoValidacaoPayload {
+    valido: boolean;
+    erros: string[];
+}
+
+/** Gera um QR Code em um elemento HTML. */
 export function gerarQRCode(config: ConfigQRCode): Promise<boolean>;
 
-/**
- * Formata dados PIX em payload EMV (Pix Copia e Cola).
- * @returns Payload EMV completo com CRC16
- */
+/** Formata dados PIX em payload EMV (Pix Copia e Cola). */
 export function formatarPix(dados: DadosPix): string;
 
-/**
- * Formata dados WiFi em string WIFI:...
- * @returns String WIFI: formatada
- */
+/** Formata dados WiFi em string WIFI:... */
 export function formatarWiFi(dados: DadosWiFi | string): string;
 
-/**
- * Formata dados de contato em vCard 3.0.
- * @returns vCard 3.0 formatado
- */
+/** Formata dados de contato em vCard 3.0. */
 export function formatarContato(dados: DadosContato): string;
+
+/** Valida chave PIX (CPF, CNPJ, e-mail, telefone ou EVP) com detecção automática. */
+export function validarChavePix(chave: string): ResultadoValidacaoChave;
+
+/** Detecta automaticamente o tipo de chave PIX. */
+export function detectarTipoChave(chave: string): TipoChavePix | null;
+
+/** Decodifica payload PIX EMV em objeto estruturado. */
+export function decodificarPix(payload: string): ResultadoDecodificacao;
+
+/** Valida payload EMV (estrutura TLV, campos obrigatórios, CRC16). */
+export function validarPayloadPix(payload: string): ResultadoValidacaoPayload;
+
+/** Normaliza chave PIX para o formato exigido no campo EMV 26-01. */
+export function normalizarChavePix(chave: string, tipo: TipoChavePix): string;
