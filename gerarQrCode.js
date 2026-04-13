@@ -1,5 +1,5 @@
 /**
- * gerarQrCode.js — v2.0.0
+ * gerarQrCode.js — v2.1.0
  *
  * Gerador de QR Code Universal
  * Suporta: PIX (estático / dinâmico), Wi-Fi (WPA / WPA2 / WPA3),
@@ -13,6 +13,14 @@
  *   • EMV QRCPS-MPM v1.1 (Merchant Presented Mode)
  *   • WPA3 Specification v3.2 — Wi-Fi Alliance, §7.1 URI format
  *   • vCard 3.0 — RFC 2426
+ *
+ * Changelog v2.1.0 (vs v2.0.0):
+ *   [NEW-06]  Validação de chave PIX: CPF (com dígitos verificadores),
+ *             CNPJ (com dígitos verificadores), e-mail, telefone, EVP (UUID v4)
+ *   [NEW-07]  Detecção automática do tipo de chave PIX
+ *   [NEW-08]  Decodificador EMV: payload string → objeto estruturado
+ *   [NEW-09]  Validação de payload EMV antes de renderizar
+ *   [NEW-10]  Normalização de chave para campo EMV 26-01
  *
  * Changelog v2.0.0 (vs v1.0.0):
  *   [FIX-01]  innerHTML → replaceChildren (vetor XSS eliminado)
@@ -194,6 +202,422 @@ function tipoParaClasse(tipo) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PIX — VALIDAÇÃO, DETECÇÃO E NORMALIZAÇÃO DE CHAVE [NEW-06/07/10]
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Valida CPF (11 dígitos + dígitos verificadores).
+ * Algoritmo oficial da Receita Federal.
+ * @param {string} cpf Apenas dígitos
+ * @returns {boolean}
+ */
+function validarCPF(cpf) {
+    if (cpf.length !== 11) { return false; }
+    // Rejeita sequências repetidas (ex: 111.111.111-11)
+    if (/^(\d)\1{10}$/.test(cpf)) { return false; }
+
+    for (let t = 9; t < 11; t++) {
+        let soma = 0;
+        for (let i = 0; i < t; i++) {
+            soma += parseInt(cpf[i], 10) * ((t + 1) - i);
+        }
+        let digito = ((soma * 10) % 11) % 10;
+        if (parseInt(cpf[t], 10) !== digito) { return false; }
+    }
+    return true;
+}
+
+/**
+ * Valida CNPJ (14 dígitos + dígitos verificadores).
+ * Algoritmo oficial da Receita Federal.
+ * @param {string} cnpj Apenas dígitos
+ * @returns {boolean}
+ */
+function validarCNPJ(cnpj) {
+    if (cnpj.length !== 14) { return false; }
+    if (/^(\d)\1{13}$/.test(cnpj)) { return false; }
+
+    const pesos1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const pesos2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+
+    let soma = 0;
+    for (let i = 0; i < 12; i++) {
+        soma += parseInt(cnpj[i], 10) * pesos1[i];
+    }
+    let resto = soma % 11;
+    let digito1 = resto < 2 ? 0 : 11 - resto;
+    if (parseInt(cnpj[12], 10) !== digito1) { return false; }
+
+    soma = 0;
+    for (let i = 0; i < 13; i++) {
+        soma += parseInt(cnpj[i], 10) * pesos2[i];
+    }
+    resto = soma % 11;
+    let digito2 = resto < 2 ? 0 : 11 - resto;
+    if (parseInt(cnpj[13], 10) !== digito2) { return false; }
+
+    return true;
+}
+
+/**
+ * Valida e-mail com regex pragmática.
+ * Conforme Manual BR Code: máximo 77 caracteres.
+ * @param {string} email
+ * @returns {boolean}
+ */
+function validarEmailPix(email) {
+    if (email.length > 77) { return false; }
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/**
+ * Valida telefone PIX.
+ * Formato esperado no DICT: +55 + DDD(2) + Número(8-9) = 13-14 dígitos com +55
+ * Aceita variações de entrada: com/sem +55, com/sem formatação.
+ * @param {string} telefone
+ * @returns {boolean}
+ */
+function validarTelefonePix(telefone) {
+    const digitos = telefone.replace(/\D/g, '');
+    // 10-11 dígitos (sem código país) ou 12-13 dígitos (com 55)
+    if (digitos.length >= 10 && digitos.length <= 11) { return true; }
+    if (digitos.length >= 12 && digitos.length <= 13 && digitos.startsWith('55')) { return true; }
+    return false;
+}
+
+/**
+ * Valida EVP (chave aleatória) — UUID v4 lowercase com hífens.
+ * Formato: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx (36 chars)
+ * @param {string} evp
+ * @returns {boolean}
+ */
+function validarEVP(evp) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(evp);
+}
+
+/**
+ * [NEW-07] Detecta automaticamente o tipo de chave PIX.
+ *
+ * Ordem de verificação (mais restritivo → menos restritivo):
+ *   1. EVP (UUID v4) — formato mais rígido
+ *   2. CPF (11 dígitos, verificadores válidos)
+ *   3. CNPJ (14 dígitos, verificadores válidos)
+ *   4. Telefone (10-13 dígitos, opcionalmente com +55)
+ *   5. E-mail (contém @)
+ *
+ * @param {string} chave Chave PIX bruta
+ * @returns {'cpf'|'cnpj'|'email'|'telefone'|'evp'|null} Tipo detectado ou null
+ */
+function detectarTipoChave(chave) {
+    if (!chave || typeof chave !== 'string') { return null; }
+    const trimmed = chave.trim();
+
+    // EVP: UUID v4 (deve ser testado primeiro — é o mais específico)
+    if (validarEVP(trimmed.toLowerCase())) { return 'evp'; }
+
+    // Apenas dígitos (CPF, CNPJ ou telefone)
+    const digitos = trimmed.replace(/\D/g, '');
+
+    if (digitos.length === 11 && !/[@+]/.test(trimmed)) {
+        // Pode ser CPF ou telefone — CPF se dígitos verificadores batem
+        if (validarCPF(digitos)) { return 'cpf'; }
+        if (validarTelefonePix(trimmed)) { return 'telefone'; }
+    }
+
+    if (digitos.length === 14 && validarCNPJ(digitos)) { return 'cnpj'; }
+
+    // Telefone com +55 ou outros formatos
+    if (/^\+?55/.test(trimmed) && validarTelefonePix(trimmed)) { return 'telefone'; }
+    if (digitos.length >= 10 && digitos.length <= 13 && validarTelefonePix(trimmed)) { return 'telefone'; }
+
+    // E-mail (contém @)
+    if (trimmed.includes('@') && validarEmailPix(trimmed.toLowerCase())) { return 'email'; }
+
+    return null;
+}
+
+/**
+ * [NEW-06] Valida chave PIX com detecção automática de tipo.
+ *
+ * @param {string} chave     Chave PIX bruta
+ * @param {string} [tipoEsperado] Tipo esperado (opcional — se omitido, detecta)
+ * @returns {{ valida: boolean, tipo: string|null, erro: string|null, chaveNormalizada: string }}
+ */
+function validarChavePix(chave) {
+    const resultado = { valida: false, tipo: null, erro: null, chaveNormalizada: '' };
+
+    if (!chave || typeof chave !== 'string' || !chave.trim()) {
+        resultado.erro = 'Chave PIX não pode ser vazia';
+        return resultado;
+    }
+
+    const trimmed = chave.trim();
+    const tipo = detectarTipoChave(trimmed);
+
+    if (!tipo) {
+        resultado.erro = `Chave PIX "${trimmed}" não corresponde a nenhum formato válido (CPF, CNPJ, e-mail, telefone ou EVP)`;
+        return resultado;
+    }
+
+    resultado.tipo = tipo;
+    resultado.valida = true;
+    resultado.chaveNormalizada = normalizarChavePix(trimmed, tipo);
+    return resultado;
+}
+
+/**
+ * [NEW-10] Normaliza chave PIX para o formato exigido no campo EMV 26-01.
+ *
+ * Regras por tipo (conforme Manual de Padrões para Iniciação do Pix):
+ *   • CPF:      apenas 11 dígitos, sem pontuação
+ *   • CNPJ:     apenas 14 dígitos, sem pontuação
+ *   • Telefone: +55DDDNUMERO (com +, código país 55)
+ *   • E-mail:   lowercase, sem espaços
+ *   • EVP:      lowercase, com hífens (UUID v4)
+ *
+ * @param {string} chave Chave bruta
+ * @param {string} tipo  Tipo detectado
+ * @returns {string} Chave normalizada
+ */
+function normalizarChavePix(chave, tipo) {
+    switch (tipo) {
+        case 'cpf':
+            return chave.replace(/\D/g, '');
+
+        case 'cnpj':
+            return chave.replace(/\D/g, '');
+
+        case 'telefone': {
+            const digitos = chave.replace(/\D/g, '');
+            // Se já tem 55 no início e 12-13 dígitos, está correto
+            if (digitos.startsWith('55') && digitos.length >= 12) {
+                return `+${digitos}`;
+            }
+            // Sem código país — adiciona +55
+            return `+55${digitos}`;
+        }
+
+        case 'email':
+            return chave.trim().toLowerCase();
+
+        case 'evp':
+            return chave.trim().toLowerCase();
+
+        default:
+            return chave.trim();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PIX — DECODIFICADOR EMV [NEW-08]
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Parseia campos TLV de uma string EMV.
+ * @param {string} emv String EMV (ou sub-string)
+ * @returns {Object} Mapa { id: valor }
+ */
+function parseTLV(emv) {
+    const campos = {};
+    let pos = 0;
+    while (pos < emv.length) {
+        if (pos + 4 > emv.length) { break; }
+        const id = emv.substring(pos, pos + 2);
+        const tamanho = parseInt(emv.substring(pos + 2, pos + 4), 10);
+        if (isNaN(tamanho) || pos + 4 + tamanho > emv.length) { break; }
+        campos[id] = emv.substring(pos + 4, pos + 4 + tamanho);
+        pos += 4 + tamanho;
+    }
+    return campos;
+}
+
+/**
+ * [NEW-08] Decodifica payload PIX EMV em objeto estruturado.
+ *
+ * @param {string} payload String EMV completa (Pix Copia e Cola)
+ * @returns {{
+ *   valido: boolean,
+ *   erro: string|null,
+ *   formatIndicator: string,
+ *   pontoIniciacao: string|null,
+ *   chave: string|null,
+ *   tipoChave: string|null,
+ *   descricao: string|null,
+ *   urlDinamica: string|null,
+ *   mcc: string|null,
+ *   moeda: string|null,
+ *   valor: number|null,
+ *   pais: string|null,
+ *   beneficiario: string|null,
+ *   cidade: string|null,
+ *   identificador: string|null,
+ *   crcInformado: string|null,
+ *   crcCalculado: string|null,
+ *   crcValido: boolean
+ * }}
+ */
+function decodificarPix(payload) {
+    const resultado = {
+        valido: false, erro: null,
+        formatIndicator: null, pontoIniciacao: null,
+        chave: null, tipoChave: null, descricao: null, urlDinamica: null,
+        mcc: null, moeda: null, valor: null,
+        pais: null, beneficiario: null, cidade: null,
+        identificador: null,
+        crcInformado: null, crcCalculado: null, crcValido: false
+    };
+
+    if (!payload || typeof payload !== 'string') {
+        resultado.erro = 'Payload vazio ou inválido';
+        return resultado;
+    }
+
+    const trimmed = payload.trim();
+
+    // CRC16 — últimos 4 chars após tag "6304"
+    if (trimmed.length < 8) {
+        resultado.erro = 'Payload muito curto';
+        return resultado;
+    }
+
+    const crcPos = trimmed.lastIndexOf('6304');
+    if (crcPos === -1) {
+        resultado.erro = 'Tag CRC16 (6304) não encontrada';
+        return resultado;
+    }
+
+    resultado.crcInformado = trimmed.substring(crcPos + 4, crcPos + 8).toUpperCase();
+    resultado.crcCalculado = crc16(trimmed.substring(0, crcPos + 4));
+    resultado.crcValido = resultado.crcInformado === resultado.crcCalculado;
+
+    // Parse TLV raiz
+    const campos = parseTLV(trimmed);
+
+    resultado.formatIndicator = campos['00'] || null;
+    resultado.pontoIniciacao = campos['01'] || null;
+    resultado.mcc = campos['52'] || null;
+    resultado.moeda = campos['53'] || null;
+    resultado.pais = campos['58'] || null;
+    resultado.beneficiario = campos['59'] || null;
+    resultado.cidade = campos['60'] || null;
+
+    // Valor (campo 54)
+    if (campos['54']) {
+        const v = parseFloat(campos['54']);
+        resultado.valor = isNaN(v) ? null : v;
+    }
+
+    // Merchant Account Information (campo 26)
+    if (campos['26']) {
+        const mai = parseTLV(campos['26']);
+        // Chave PIX (26-01)
+        resultado.chave = mai['01'] || null;
+        // Descrição (26-02)
+        resultado.descricao = mai['02'] || null;
+        // URL dinâmica (26-25)
+        resultado.urlDinamica = mai['25'] || null;
+    }
+
+    // Additional Data Field (campo 62)
+    if (campos['62']) {
+        const adf = parseTLV(campos['62']);
+        resultado.identificador = adf['05'] || null;
+    }
+
+    // Detecta tipo da chave
+    if (resultado.chave) {
+        resultado.tipoChave = detectarTipoChave(resultado.chave);
+    }
+
+    resultado.valido = resultado.crcValido
+        && resultado.formatIndicator === '01'
+        && !!(resultado.chave || resultado.urlDinamica);
+
+    if (!resultado.valido && !resultado.erro) {
+        if (!resultado.crcValido) {
+            resultado.erro = `CRC16 inválido: informado ${resultado.crcInformado}, calculado ${resultado.crcCalculado}`;
+        } else if (resultado.formatIndicator !== '01') {
+            resultado.erro = `Format Indicator inválido: "${resultado.formatIndicator}" (esperado "01")`;
+        } else {
+            resultado.erro = 'Payload não contém chave PIX nem URL dinâmica';
+        }
+    }
+
+    return resultado;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PIX — VALIDAÇÃO DE PAYLOAD [NEW-09]
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * [NEW-09] Valida payload EMV antes de renderizar.
+ * Verifica: estrutura TLV, campos obrigatórios, tamanhos, CRC16.
+ *
+ * @param {string} payload String EMV
+ * @returns {{ valido: boolean, erros: string[] }}
+ */
+function validarPayloadPix(payload) {
+    const erros = [];
+
+    if (!payload || typeof payload !== 'string') {
+        return { valido: false, erros: ['Payload vazio ou não é string'] };
+    }
+
+    const trimmed = payload.trim();
+
+    // Tamanho mínimo: header(4) + GUI(18) + CRC(8) ≈ 50 chars
+    if (trimmed.length < 50) {
+        erros.push(`Payload muito curto (${trimmed.length} chars, mínimo ~50)`);
+    }
+
+    // Deve começar com 000201
+    if (!trimmed.startsWith('000201')) {
+        erros.push('Payload não começa com "000201" (Payload Format Indicator)');
+    }
+
+    // Deve conter GUI PIX
+    if (!trimmed.includes('BR.GOV.BCB.PIX')) {
+        erros.push('GUI "BR.GOV.BCB.PIX" não encontrado no payload');
+    }
+
+    // CRC16
+    const crcPos = trimmed.lastIndexOf('6304');
+    if (crcPos === -1) {
+        erros.push('Tag CRC16 (6304) não encontrada');
+    } else {
+        const crcInformado = trimmed.substring(crcPos + 4, crcPos + 8).toUpperCase();
+        const crcCalculado = crc16(trimmed.substring(0, crcPos + 4));
+        if (crcInformado !== crcCalculado) {
+            erros.push(`CRC16 inválido: informado ${crcInformado}, calculado ${crcCalculado}`);
+        }
+        // Nada deve vir depois do CRC
+        if (trimmed.length > crcPos + 8) {
+            erros.push('Dados após o CRC16 — payload corrompido');
+        }
+    }
+
+    // Campos obrigatórios via parse
+    const campos = parseTLV(trimmed);
+    if (!campos['52']) { erros.push('Campo 52 (MCC) ausente'); }
+    if (!campos['53']) { erros.push('Campo 53 (Moeda) ausente'); }
+    if (campos['53'] && campos['53'] !== '986') { erros.push(`Moeda "${campos['53']}" ≠ "986" (BRL)`); }
+    if (!campos['58']) { erros.push('Campo 58 (País) ausente'); }
+    if (!campos['59']) { erros.push('Campo 59 (Beneficiário) ausente'); }
+    if (!campos['60']) { erros.push('Campo 60 (Cidade) ausente'); }
+
+    // Tamanhos máximos BR Code
+    if (campos['59'] && campos['59'].length > 25) {
+        erros.push(`Beneficiário excede 25 chars (${campos['59'].length})`);
+    }
+    if (campos['60'] && campos['60'].length > 15) {
+        erros.push(`Cidade excede 15 chars (${campos['60'].length})`);
+    }
+
+    return { valido: erros.length === 0, erros };
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  FORMATADORES — PIX
 // ═══════════════════════════════════════════════════════════════
 
@@ -211,10 +635,17 @@ function tipoParaClasse(tipo) {
  * @returns {string} Payload EMV completo com CRC16
  */
 function formatarPixEstatico(dados) {
-    const chave = sanitizar(dados.chave).trim();
-    if (!chave) {
+    const chaveRaw = sanitizar(dados.chave).trim();
+    if (!chaveRaw) {
         throw new Error('PIX estático: campo "chave" é obrigatório e não pode ser vazio');
     }
+
+    // [NEW-06] Valida e [NEW-10] normaliza a chave
+    const validacao = validarChavePix(chaveRaw);
+    if (!validacao.valida) {
+        throw new Error(`PIX estático: ${validacao.erro}`);
+    }
+    const chave = validacao.chaveNormalizada;
 
     const beneficiario = removerAcentos(
         sanitizar(dados.beneficiario || 'RECEBEDOR')
@@ -325,6 +756,11 @@ function formatarPix(dados) {
     // String EMV completa
     if (typeof dados === 'string') {
         if (dados.startsWith('00020126') || dados.includes('BR.GOV.BCB.PIX')) {
+            // [NEW-09] Valida payload antes de aceitar
+            const validacao = validarPayloadPix(dados);
+            if (!validacao.valido) {
+                throw new Error(`PIX: payload EMV inválido — ${validacao.erros.join('; ')}`);
+            }
             return dados;
         }
         // String simples → chave PIX
@@ -335,9 +771,17 @@ function formatarPix(dados) {
         throw new Error('PIX: valor deve ser string (chave ou EMV) ou objeto');
     }
 
-    // Payload bruto
-    if (dados.dadosEmv) { return dados.dadosEmv; }
-    if (dados.payload)  { return dados.payload;  }
+    // Payload bruto — [NEW-09] valida antes de aceitar
+    if (dados.dadosEmv) {
+        const v = validarPayloadPix(dados.dadosEmv);
+        if (!v.valido) { throw new Error(`PIX: dadosEmv inválido — ${v.erros.join('; ')}`); }
+        return dados.dadosEmv;
+    }
+    if (dados.payload) {
+        const v = validarPayloadPix(dados.payload);
+        if (!v.valido) { throw new Error(`PIX: payload inválido — ${v.erros.join('; ')}`); }
+        return dados.payload;
+    }
 
     // Dinâmico (URL)
     if (dados.url) { return formatarPixDinamico(dados); }
@@ -712,5 +1156,10 @@ export {
     gerarQRCode,           // Função principal — renderiza no DOM
     formatarPix,           // Utilitário — retorna payload EMV (Pix Copia e Cola)
     formatarWiFi,          // Utilitário — retorna string WIFI:...
-    formatarContato        // Utilitário — retorna vCard 3.0
+    formatarContato,       // Utilitário — retorna vCard 3.0
+    validarChavePix,       // [NEW-06] Valida chave PIX (CPF, CNPJ, email, tel, EVP)
+    detectarTipoChave,     // [NEW-07] Detecta tipo de chave automaticamente
+    decodificarPix,        // [NEW-08] Decodifica payload EMV → objeto
+    validarPayloadPix,     // [NEW-09] Valida payload EMV (estrutura, CRC16, campos)
+    normalizarChavePix     // [NEW-10] Normaliza chave para campo EMV 26-01
 };
