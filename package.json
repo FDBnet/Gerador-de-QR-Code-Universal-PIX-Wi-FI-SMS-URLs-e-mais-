@@ -1,6 +1,6 @@
 {
   "name": "gerar-qrcode",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Gerador de QR Code universal — PIX (estático/dinâmico com EMV + CRC16), Wi-Fi (WPA2/WPA3), URL, E-mail, Telefone, SMS, Contato (vCard 3.0) e Texto livre.",
   "main": "gerarQrCode.js",
   "module": "gerarQrCode.js",
