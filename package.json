@@ -1,0 +1,69 @@
+{
+  "name": "gerar-qrcode",
+  "version": "2.0.0",
+  "description": "Gerador de QR Code universal — PIX (estático/dinâmico com EMV + CRC16), Wi-Fi (WPA2/WPA3), URL, E-mail, Telefone, SMS, Contato (vCard 3.0) e Texto livre.",
+  "main": "gerarQrCode.js",
+  "module": "gerarQrCode.js",
+  "types": "gerarQrCode.d.ts",
+  "exports": {
+    ".": {
+      "import": "./gerarQrCode.js",
+      "default": "./gerarQrCode.js"
+    },
+    "./min": "./gerarQrCode.min.js"
+  },
+  "type": "module",
+  "files": [
+    "gerarQrCode.js",
+    "gerarQrCode.min.js",
+    "gerarQrCode.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node teste_integridade.mjs",
+    "minify": "terser gerarQrCode.js -o gerarQrCode.min.js --compress --mangle --module",
+    "build": "npm run minify",
+    "prepublishOnly": "npm run test && npm run build"
+  },
+  "keywords": [
+    "qrcode",
+    "qr-code",
+    "pix",
+    "pix-qrcode",
+    "emv",
+    "brcode",
+    "wifi-qrcode",
+    "wpa3",
+    "vcard",
+    "sms",
+    "javascript",
+    "es6",
+    "brasil",
+    "banco-central",
+    "pagamento"
+  ],
+  "author": {
+    "name": "Rodrigo S. Magalhães",
+    "url": "https://github.com/FDBnet"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-URLs-e-mais-.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-URLs-e-mais-/issues"
+  },
+  "homepage": "https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-URLs-e-mais-#readme",
+  "peerDependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "terser": "^5.46.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
