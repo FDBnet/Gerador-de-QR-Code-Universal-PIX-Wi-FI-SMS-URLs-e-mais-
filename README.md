@@ -11,7 +11,7 @@ JavaScript puro (ES6+). Zero frameworks. Uma dependência ([qrcode](https://www.
 ### npm (recomendado para projetos com bundler)
 
 ```bash
-npm install gerar-qrcode qrcode
+npm install gerar-qrcode
 ```
 
 ```javascript
