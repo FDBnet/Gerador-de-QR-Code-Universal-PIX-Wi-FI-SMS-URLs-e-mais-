@@ -4,7 +4,7 @@ PIX (estático/dinâmico) · Wi-Fi (WPA2/WPA3) · URL · E-mail · Telefone · S
 
 JavaScript puro (ES6+). Zero frameworks. Uma dependência ([qrcode](https://www.npmjs.com/package/qrcode)).
 
-> **v2.0.0** — PIX com EMV + CRC16 completo, Wi-Fi com WPA3, 12 bug fixes, 80 testes automatizados.
+> **v2.1.0** — Validação de chave PIX (CPF/CNPJ/email/tel/EVP com dígitos verificadores), detecção automática de tipo, decodificador EMV, normalização para campo 26-01, validação de payload. 83 testes automatizados.
 
 ## Instalação
 
@@ -42,14 +42,14 @@ git clone https://github.com/FDBnet/Gerador-de-QR-Code-Universal-PIX-Wi-FI-SMS-U
 
 ### PIX Estático (Copia e Cola)
 
-Gera payload EMV completo com CRC16, conforme Manual BR Code BCB v2.0.1 e Manual de Padrões para Iniciação do Pix v2.9.0.
+Gera payload EMV completo com CRC16. A chave é validada (CPF/CNPJ com dígitos verificadores, e-mail, telefone, EVP) e normalizada automaticamente antes da geração.
 
 ```javascript
 await gerarQRCode({
     elementoId: 'qr-pix',
     tipo: 'pix',
     valor: {
-        chave: '12345678900',           // CPF, CNPJ, e-mail, telefone ou EVP
+        chave: '529.982.247-25',        // aceita formatado — normaliza para 52998224725
         beneficiario: 'Fulano de Tal',  // até 25 chars
         cidade: 'São Paulo',            // até 15 chars
         valor: 10.50,                   // 0 ou omitido = pagador informa
@@ -58,6 +58,18 @@ await gerarQRCode({
     }
 });
 ```
+
+A chave PIX aceita qualquer formato de entrada e normaliza automaticamente:
+
+| Entrada | Tipo detectado | Normalizado no EMV |
+|---------|---------------|-------------------|
+| `'529.982.247-25'` | CPF | `52998224725` |
+| `'11.222.333/0001-81'` | CNPJ | `11222333000181` |
+| `'(11) 99999-8888'` | Telefone | `+5511999998888` |
+| `'FULANO@Banco.COM'` | E-mail | `fulano@banco.com` |
+| `'123E4567-E89B-42D3-A456-556642440000'` | EVP | `123e4567-e89b-42d3-a456-556642440000` |
+
+Chave inválida (CPF com dígitos errados, formato não reconhecido) lança erro antes de gerar o QR Code.
 
 ### PIX Dinâmico (URL)
 
@@ -75,8 +87,9 @@ await gerarQRCode({
 
 ### PIX com payload EMV pronto
 
+O payload é validado (estrutura TLV, CRC16, campos obrigatórios) antes de gerar o QR Code.
+
 ```javascript
-// String Pix Copia e Cola já gerada pelo seu PSP
 await gerarQRCode({
     elementoId: 'qr-pix-raw',
     tipo: 'pix',
@@ -180,26 +193,105 @@ await gerarQRCode({
 });
 ```
 
-## Utilitários standalone
+## Utilitários PIX
 
-Para obter o payload sem renderizar QR Code (ex: Pix Copia e Cola):
+Funções standalone para usar sem renderizar QR Code.
+
+### Gerar Pix Copia e Cola
 
 ```javascript
-import { formatarPix, formatarWiFi, formatarContato } from 'gerar-qrcode';
+import { formatarPix } from 'gerar-qrcode';
 
-// Retorna a string EMV pronta para copiar
 const pixCopiaCola = formatarPix({
-    chave: '12345678900',
+    chave: '52998224725',
     beneficiario: 'Fulano',
     cidade: 'São Paulo',
     valor: 25.00
 });
-console.log(pixCopiaCola);
-// → 00020101021226430014BR.GOV.BCB.PIX011112345678900...6304XXXX
+// → 00020101021226430014BR.GOV.BCB.PIX011152998224725...6304XXXX
+```
 
-// Retorna string WIFI:...
+### Validar chave PIX
+
+```javascript
+import { validarChavePix } from 'gerar-qrcode';
+
+const resultado = validarChavePix('529.982.247-25');
+// {
+//   valida: true,
+//   tipo: 'cpf',
+//   erro: null,
+//   chaveNormalizada: '52998224725'
+// }
+
+const invalida = validarChavePix('12345678900');
+// { valida: false, tipo: null, erro: 'Chave PIX "12345678900" não corresponde...' }
+```
+
+### Detectar tipo de chave
+
+```javascript
+import { detectarTipoChave } from 'gerar-qrcode';
+
+detectarTipoChave('52998224725');                              // → 'cpf'
+detectarTipoChave('11222333000181');                           // → 'cnpj'
+detectarTipoChave('fulano@banco.com');                         // → 'email'
+detectarTipoChave('+5511999998888');                           // → 'telefone'
+detectarTipoChave('123e4567-e89b-42d3-a456-556642440000');    // → 'evp'
+detectarTipoChave('texto-qualquer');                           // → null
+```
+
+### Decodificar Pix Copia e Cola
+
+```javascript
+import { decodificarPix } from 'gerar-qrcode';
+
+const dec = decodificarPix('00020101021226430014BR.GOV.BCB.PIX...');
+// {
+//   valido: true,
+//   crcValido: true,
+//   chave: '52998224725',
+//   tipoChave: 'cpf',
+//   valor: 25.00,
+//   beneficiario: 'FULANO',
+//   cidade: 'SAO PAULO',
+//   identificador: '***',
+//   descricao: null,
+//   ...
+// }
+```
+
+### Validar payload EMV
+
+```javascript
+import { validarPayloadPix } from 'gerar-qrcode';
+
+const val = validarPayloadPix(payloadString);
+// { valido: true, erros: [] }
+// ou
+// { valido: false, erros: ['CRC16 inválido: ABCD ≠ 1234', 'Campo 59 ausente'] }
+```
+
+### Normalizar chave
+
+```javascript
+import { normalizarChavePix } from 'gerar-qrcode';
+
+normalizarChavePix('529.982.247-25', 'cpf');    // → '52998224725'
+normalizarChavePix('11999998888', 'telefone');   // → '+5511999998888'
+normalizarChavePix('FULANO@X.COM', 'email');     // → 'fulano@x.com'
+```
+
+## Outros utilitários
+
+```javascript
+import { formatarWiFi, formatarContato } from 'gerar-qrcode';
+
 const wifiStr = formatarWiFi({ nomeRede: 'X', senha: 'Y' });
 // → WIFI:T:WPA;S:X;P:Y;;
+
+const vcard = formatarContato({ nome: 'João', telefone: '11999' });
+// → BEGIN:VCARD\nVERSION:3.0\n...
 ```
 
 ## Opções de configuração
@@ -230,6 +322,20 @@ const opcoes = {
 | `contato` | `object` | `{ nome, telefone, email }` |
 | `texto` | `string` ou `number` | `'Olá mundo'` |
 
+## API completa
+
+| Função | Descrição |
+|--------|-----------|
+| `gerarQRCode(config)` | Renderiza QR Code no DOM |
+| `formatarPix(dados)` | Gera payload EMV (Pix Copia e Cola) |
+| `validarChavePix(chave)` | Valida chave PIX com dígitos verificadores |
+| `detectarTipoChave(chave)` | Detecta tipo: cpf, cnpj, email, telefone, evp |
+| `decodificarPix(payload)` | Decodifica payload EMV → objeto |
+| `validarPayloadPix(payload)` | Valida estrutura, CRC16, campos obrigatórios |
+| `normalizarChavePix(chave, tipo)` | Normaliza para formato EMV 26-01 |
+| `formatarWiFi(dados)` | Gera string WIFI: (WPA2/WPA3) |
+| `formatarContato(dados)` | Gera vCard 3.0 |
+
 ## Personalização CSS
 
 ```css
@@ -251,13 +357,14 @@ const opcoes = {
 node teste_integridade.mjs
 ```
 
-80 testes cobrindo: TLV, CRC16, PIX estático/dinâmico, WiFi WPA2/WPA3, vCard, URL, telefone, SMS, sanitização, edge cases.
+83 testes cobrindo: validação CPF/CNPJ/email/telefone/EVP, detecção automática de tipo, normalização de chave, geração e decodificação de payload EMV, validação de CRC16, roundtrip (gerar → decodificar → comparar), WiFi WPA2/WPA3, vCard, sanitização, edge cases.
 
 ## Compatibilidade
 
 - Navegadores: Chrome 80+, Firefox 78+, Safari 14+, Edge 80+
 - Node.js: 16+
 - ES Modules (ESM)
+- TypeScript (declarations incluídas)
 
 ## Referências normativas
 
