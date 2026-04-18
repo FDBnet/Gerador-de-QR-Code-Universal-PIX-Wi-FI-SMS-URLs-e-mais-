@@ -3,6 +3,34 @@
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [2.2.0] — 2026-04-18
+
+Versão focada em correções de **raiz** (sem patches), identificadas por análise adversarial contra o módulo real. Todas validadas por testes de regressão dedicados.
+
+### Corrigido
+
+- **[FIX-13]** `escaparWiFi`: removido escape indevido de apóstrofo (`'`). A spec **WPA3 §7.1 / ZXing** define o conjunto de escape como exatamente `\ ; , : "`. Incluir `'` fazia leitores estritos manterem o backslash literal no SSID, impedindo conexão.
+- **[FIX-14]** `tlv()`: validação estrita de `length ≤ 99`. **EMV QRCPS-MPM §4.3** limita o campo Length a 2 dígitos decimais. Antes, valores com >99 chars geravam `padStart(2,'0')` retornando 3+ dígitos, quebrando a estrutura TLV silenciosamente — CRC16 ainda batia (é calculado sobre bytes), mas o parser do banco rejeitava. Efeito colateral documentado: PIX dinâmico tem limite efetivo de **77 chars** para a URL (campo 26 total ≤ 99 menos overhead TLV).
+- **[FIX-15]** `formatarContato`: aplicado escape **RFC 2426 §4** (`escaparVCard`) em todos os valores de propriedade (`FN`, `N`, `TEL`, `EMAIL`, `ORG`, `TITLE`, `ADR`, `URL`). Sem esse escape, nomes/organizações/endereços contendo `;` ou `,` corrompiam o vCard no parser estrito de iOS, Android e Outlook. Ordem: `\\` → `\\\\` primeiro, depois `;`, `,`, newline.
+- **[FIX-16]** `formatarPixEstatico` / `formatarPixDinamico`: sanitização de `beneficiario` e `cidade` passou a aplicar fallback (`RECEBEDOR` / `BRASILIA`) **após** sanitizar. Antes, input só com caracteres de controle (ex: `\x01\x02`) virava `""` e seguia para o payload, violando o Manual BR Code (campos 59 e 60 obrigatórios, não-vazios).
+- **[FIX-17]** `validarTelefonePix` reescrito conforme **Plano de Numeração Brasileiro (ANATEL Res. 709/2020)**:
+  - DDD obrigatório na faixa 11–99
+  - Celular: 11 dígitos, nono dígito obrigatório na posição 3 (regex `/^9\d{8}$/`)
+  - Fixo: 10 dígitos, primeiro dígito do número ∈ [2-9] (1 é reservado para serviços)
+  - Código país BR (`55` prefixo) descontado antes da validação estrutural
+
+  Antes aceitava qualquer 10–11 dígitos, fazendo CPFs com dígitos verificadores inválidos serem classificados como telefone em `detectarTipoChave`.
+- **[FIX-18]** `formatarPixEstatico`: valor `NaN` ou negativo agora lança `Error` explícito. Antes, `parseFloat('abc')` produzia `NaN`; `NaN > 0` é `false`; `-10 > 0` é `false`. Ambos geravam PIX sem campo 54 silenciosamente, fazendo o pagador "informar o valor" sem saber.
+
+### Refatorado
+
+- **[REFAC]** `teste_integridade.mjs` agora importa o módulo real (`import { ... } from './gerarQrCode.js'`). Antes reimplementava toda a lógica inline, fazendo o teste validar uma cópia duplicada — qualquer bug no arquivo principal passava despercebido.
+- Suite expandida para **98 testes**, com seção dedicada de regressão para os 6 bugs corrigidos.
+
+### Referências normativas adicionadas
+
+- Plano de Numeração Brasileiro — ANATEL Resolução 709/2020 (celular com 9 obrigatório, faixa de DDDs válidos).
+
 ## [2.1.1] — 2026-04-13
 
 ### Alterado

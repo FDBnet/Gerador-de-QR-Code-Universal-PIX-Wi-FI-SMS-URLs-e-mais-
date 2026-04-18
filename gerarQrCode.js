@@ -1,5 +1,5 @@
 /**
- * gerarQrCode.js — v2.1.0
+ * gerarQrCode.js — v2.2.0
  *
  * Gerador de QR Code Universal
  * Suporta: PIX (estático / dinâmico), Wi-Fi (WPA / WPA2 / WPA3),
@@ -13,6 +13,36 @@
  *   • EMV QRCPS-MPM v1.1 (Merchant Presented Mode)
  *   • WPA3 Specification v3.2 — Wi-Fi Alliance, §7.1 URI format
  *   • vCard 3.0 — RFC 2426
+ *   • Plano de Numeração Brasileiro — ANATEL Resolução 709/2020
+ *
+ * Changelog v2.2.0 (vs v2.1.1) — correções de raiz, sem patches:
+ *   [FIX-13]  escaparWiFi: aspa simples removida do regex (fora WPA3 §7.1).
+ *             SSIDs com ' iam com backslash literal em leitores estritos.
+ *   [FIX-14]  tlv(): validação estrita de length ≤ 99. EMV QRCPS-MPM §4.3
+ *             limita Length a 2 dígitos decimais. Antes, valores > 99 chars
+ *             geravam payload malformado com CRC16 "válido" (CRC é sobre
+ *             bytes, não valida estrutura TLV). PIX dinâmico: limite efetivo
+ *             de URL documentado = 77 chars.
+ *   [FIX-15]  formatarContato: escape RFC 2426 §4 aplicado em todos os
+ *             valores (FN, N, TEL, EMAIL, ORG, TITLE, ADR, URL). Antes,
+ *             nomes/organizações/endereços com ";" ou "," corrompiam o
+ *             vCard no parser estrito de iOS/Android/Outlook.
+ *   [FIX-16]  formatarPix: sanitização de beneficiário/cidade passou a
+ *             validar se o resultado é vazio (input só com ctrl chars
+ *             esvaziava campo obrigatório). Fallback para RECEBEDOR/
+ *             BRASILIA só após sanitizar.
+ *   [FIX-17]  validarTelefonePix reescrito conforme Plano de Numeração:
+ *             • DDD 11-99 obrigatório
+ *             • Celular: 9 obrigatório na posição 3 (ANATEL Res. 709/2020)
+ *             • Fixo: primeiro dígito ∈ [2-9] (1 é reservado para serviços)
+ *             Antes aceitava qualquer 10-11 dígitos; CPFs inválidos caíam
+ *             silenciosamente como telefone.
+ *   [FIX-18]  formatarPixEstatico: valor NaN ou negativo agora lança erro
+ *             explícito. Antes eram descartados silenciosamente (NaN > 0
+ *             false; -10 > 0 false), gerando PIX sem campo 54 sem aviso.
+ *   [REFAC]   teste_integridade.mjs: importa o módulo real (antes
+ *             reimplementava tudo inline — bugs no arquivo principal
+ *             passavam despercebidos).
  *
  * Changelog v2.1.0 (vs v2.0.0):
  *   [NEW-06]  Validação de chave PIX: CPF (com dígitos verificadores),
@@ -83,12 +113,29 @@ const WIFI_CRIPTO = Object.freeze({
 
 /**
  * Codifica um campo TLV (Tag-Length-Value) no padrão EMV.
+ *
+ * EMV QRCPS-MPM §4.3: o campo Length é EXATAMENTE 2 dígitos decimais
+ * (00–99). Valor com length > 99 quebra o formato e o parser do banco
+ * rejeitará o QR Code silenciosamente.
+ *
+ * [FIX-14] Validação estrita de length — antes, padStart(2,'0') retornava
+ *          3+ dígitos para valores > 99 chars, gerando payload malformado
+ *          com CRC16 "válido" (CRC é sobre bytes, não valida estrutura TLV).
+ *
  * @param {string} id    ID do campo (2 dígitos, ex: '00', '26')
  * @param {string} valor Conteúdo do campo
  * @returns {string} Campo TLV formatado
+ * @throws {Error} Se valor.length > 99
  */
 function tlv(id, valor) {
-    return `${id}${String(valor.length).padStart(2, '0')}${valor}`;
+    const s = String(valor);
+    if (s.length > 99) {
+        throw new Error(
+            `TLV: campo "${id}" excede 99 caracteres (length=${s.length}). `
+            + 'EMV QRCPS-MPM §4.3 limita Length a 2 dígitos decimais (00-99).'
+        );
+    }
+    return `${id}${String(s.length).padStart(2, '0')}${s}`;
 }
 
 /**
@@ -116,14 +163,49 @@ function crc16(str) {
  * ao escanear. Backslash-escape (formato ZXing original) tem a maior
  * compatibilidade cross-platform (Android, iOS, Windows).
  *
- * Caracteres escapados: \ ; , : "
+ * Caracteres escapados (exatamente os da spec WPA3 §7.1 / ZXing):
+ *   \  ;  ,  :  "
+ *
+ * [FIX-13] Apóstrofo (') removido — não está na spec; leitores estritos
+ *          mantinham o backslash literal no SSID, impedindo conexão.
  *
  * @param {string} valor
  * @returns {string}
  */
 function escaparWiFi(valor) {
     if (typeof valor !== 'string') { return ''; }
-    return valor.replace(/([\\;,:"'])/g, '\\$1');
+    return valor.replace(/([\\;,:"])/g, '\\$1');
+}
+
+/**
+ * Escapa caracteres especiais em valores de propriedade vCard.
+ *
+ * RFC 2426 §4: em valores de propriedade (inclusive componentes de
+ * propriedades estruturadas como N: e ADR:), os seguintes caracteres
+ * DEVEM ser escapados com backslash:
+ *
+ *   \n ou \r\n  →  \n (literal: backslash + n)
+ *   ;           →  \;
+ *   ,           →  \,
+ *   \           →  \\
+ *
+ * O backslash DEVE ser escapado primeiro para não escapar duplamente
+ * os escapes recém-introduzidos.
+ *
+ * [FIX-15] Antes: valores iam crus para FN/N/ORG/TITLE/ADR/URL/EMAIL,
+ *          corrompendo vCards com nomes contendo ";" ou "," (parser
+ *          de contatos do iOS/Android/Outlook seguem a RFC estrita).
+ *
+ * @param {string} valor
+ * @returns {string}
+ */
+function escaparVCard(valor) {
+    if (typeof valor !== 'string') { return ''; }
+    return valor
+        .replace(/\\/g, '\\\\')      // \  → \\  (PRIMEIRO)
+        .replace(/;/g,  '\\;')        // ;  → \;
+        .replace(/,/g,  '\\,')        // ,  → \,
+        .replace(/\r?\n/g, '\\n');    // LF/CRLF → \n literal
 }
 
 /**
@@ -271,18 +353,45 @@ function validarEmailPix(email) {
 }
 
 /**
- * Valida telefone PIX.
- * Formato esperado no DICT: +55 + DDD(2) + Número(8-9) = 13-14 dígitos com +55
- * Aceita variações de entrada: com/sem +55, com/sem formatação.
+ * Valida telefone PIX conforme Manual de Padrões BCB + Plano de Numeração
+ * Brasileiro (ANATEL Resolução 709/2020).
+ *
+ * Estrutura aceita (após remover não-dígitos):
+ *   • 10 dígitos — DDD(2) + fixo(8 dígitos, primeiro ∈ [2-9])
+ *   • 11 dígitos — DDD(2) + celular(9 dígitos, primeiro = 9)
+ *   • 12 dígitos — "55" + DDD(2) + fixo(8)
+ *   • 13 dígitos — "55" + DDD(2) + celular(9)
+ *
+ * DDD válido: 11–99 (lista efetiva é menor, mas a faixa numérica é esta).
+ *
+ * [FIX-17] Antes aceitava qualquer 10-11 dígitos. Um CPF com verificadores
+ *          inválidos (11 dígitos) caía como telefone silenciosamente.
+ *
  * @param {string} telefone
  * @returns {boolean}
  */
 function validarTelefonePix(telefone) {
     const digitos = telefone.replace(/\D/g, '');
-    // 10-11 dígitos (sem código país) ou 12-13 dígitos (com 55)
-    if (digitos.length >= 10 && digitos.length <= 11) { return true; }
-    if (digitos.length >= 12 && digitos.length <= 13 && digitos.startsWith('55')) { return true; }
-    return false;
+
+    // Desconta código país BR quando presente no comprimento esperado
+    const local = (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13))
+        ? digitos.substring(2)
+        : digitos;
+
+    if (local.length !== 10 && local.length !== 11) { return false; }
+
+    // DDD: 11-99
+    const ddd = parseInt(local.substring(0, 2), 10);
+    if (isNaN(ddd) || ddd < 11 || ddd > 99) { return false; }
+
+    const numero = local.substring(2);
+
+    // Celular: 9 dígitos iniciando com 9
+    if (local.length === 11) {
+        return /^9\d{8}$/.test(numero);
+    }
+    // Fixo: 8 dígitos iniciando com 2-9 (1 é reservado para serviços)
+    return /^[2-9]\d{7}$/.test(numero);
 }
 
 /**
@@ -647,17 +756,41 @@ function formatarPixEstatico(dados) {
     }
     const chave = validacao.chaveNormalizada;
 
-    const beneficiario = removerAcentos(
-        sanitizar(dados.beneficiario || 'RECEBEDOR')
+    // [FIX-16] Sanitização que preserva campo obrigatório não-vazio.
+    //          Antes: input só com caracteres de controle virava "" e seguia;
+    //          o default ('RECEBEDOR'/'BRASILIA') só era usado se o campo
+    //          fosse falsy ANTES de sanitizar, não depois.
+    const benefSanit = removerAcentos(
+        sanitizar(dados.beneficiario || '')
     ).substring(0, 25).toUpperCase();
+    const beneficiario = benefSanit || 'RECEBEDOR';
 
-    const cidade = removerAcentos(
-        sanitizar(dados.cidade || 'BRASILIA')
+    const cidadeSanit = removerAcentos(
+        sanitizar(dados.cidade || '')
     ).substring(0, 15).toUpperCase();
+    const cidade = cidadeSanit || 'BRASILIA';
 
     const identificador = dados.identificador
         ? sanitizar(dados.identificador).replace(/[^A-Za-z0-9]/g, '').substring(0, 25)
         : '***';
+
+    // [FIX-18] Validação explícita do valor — NaN e negativos eram
+    //          descartados silenciosamente (parseFloat('abc')=NaN, NaN>0=false;
+    //          -10 > 0 = false). Ambos geravam PIX sem campo 54, sem erro.
+    let valorNum = 0;
+    if (dados.valor !== undefined && dados.valor !== null && dados.valor !== '') {
+        valorNum = parseFloat(paraString(dados.valor));
+        if (isNaN(valorNum)) {
+            throw new Error(
+                `PIX estático: valor "${dados.valor}" não é um número válido`
+            );
+        }
+        if (valorNum < 0) {
+            throw new Error(
+                `PIX estático: valor não pode ser negativo (recebido ${valorNum})`
+            );
+        }
+    }
 
     // --- Merchant Account Information (ID 26) ---
     let mai = tlv('00', 'BR.GOV.BCB.PIX') + tlv('01', chave);
@@ -671,7 +804,6 @@ function formatarPixEstatico(dados) {
 
     // Point of Initiation Method (ID 01)
     // "12" = uso único (quando valor é definido); omitido = reutilizável
-    const valorNum = dados.valor != null ? parseFloat(paraString(dados.valor)) : 0;
     if (valorNum > 0) {
         payload += tlv('01', '12');
     }
@@ -702,10 +834,11 @@ function formatarPixEstatico(dados) {
  * consulta essa URL para obter os dados completos da cobrança.
  *
  * @param {Object} dados
- * @param {string} dados.url           URL do location — obrigatório
+ * @param {string} dados.url           URL do location — obrigatório, máx 77 chars
  * @param {string} [dados.beneficiario] Nome (máx 25 chars)
  * @param {string} [dados.cidade]       Cidade (máx 15 chars)
  * @returns {string} Payload EMV completo com CRC16
+ * @throws {Error} Se URL > 77 chars (campo 26 total ≤ 99; overhead TLV = 22)
  */
 function formatarPixDinamico(dados) {
     const url = sanitizar(dados.url).trim();
@@ -713,13 +846,26 @@ function formatarPixDinamico(dados) {
         throw new Error('PIX dinâmico: campo "url" é obrigatório e não pode ser vazio');
     }
 
-    const beneficiario = removerAcentos(
-        sanitizar(dados.beneficiario || 'RECEBEDOR')
-    ).substring(0, 25).toUpperCase();
+    // [FIX-14] Limite efetivo imposto pela spec EMV:
+    //   campo 26 ≤ 99 chars = tlv('00','BR.GOV.BCB.PIX')(18) + tlv('25',url)(4+N)
+    //   ⇒ 18 + 4 + N ≤ 99 ⇒ N ≤ 77
+    if (url.length > 77) {
+        throw new Error(
+            `PIX dinâmico: URL excede 77 caracteres (length=${url.length}). `
+            + 'Limite imposto pelo campo 26 EMV (máx 99 chars, menos overhead TLV).'
+        );
+    }
 
-    const cidade = removerAcentos(
-        sanitizar(dados.cidade || 'BRASILIA')
+    // [FIX-16] Sanitização preservando campo obrigatório não-vazio
+    const benefSanit = removerAcentos(
+        sanitizar(dados.beneficiario || '')
+    ).substring(0, 25).toUpperCase();
+    const beneficiario = benefSanit || 'RECEBEDOR';
+
+    const cidadeSanit = removerAcentos(
+        sanitizar(dados.cidade || '')
     ).substring(0, 15).toUpperCase();
+    const cidade = cidadeSanit || 'BRASILIA';
 
     // Merchant Account Information com URL (campo 25)
     const mai = tlv('00', 'BR.GOV.BCB.PIX') + tlv('25', url);
@@ -937,6 +1083,8 @@ function formatarSms(valor) {
  * Formata contato como vCard 3.0 (RFC 2426).
  * [FIX-07] Valor string → erro explícito.
  * [NEW-03] Campos expandidos: ORG, TITLE, ADR, URL.
+ * [FIX-15] Escape RFC 2426 §4 aplicado em todos os valores de propriedade.
+ *          Antes: nome com ";" ou "," corrompia o vCard ao ser importado.
  *
  * @param {Object} dados
  * @param {string}        dados.nome         Nome completo — obrigatório
@@ -962,19 +1110,22 @@ function formatarContato(dados) {
         throw new Error('Contato: campo "nome" é obrigatório');
     }
 
+    // [FIX-15] Helper: sanitizar (remove ctrl chars) → escaparVCard (RFC 2426 §4)
+    const vc = (v) => escaparVCard(sanitizar(v));
+
     const linhas = [
         'BEGIN:VCARD',
         'VERSION:3.0',
-        `FN:${sanitizar(nome)}`,
-        `N:${sanitizar(nome)};;;;`
+        `FN:${vc(nome)}`,
+        `N:${vc(nome)};;;;`
     ];
 
-    if (telefone != null) { linhas.push(`TEL:${sanitizar(paraString(telefone))}`); }
-    if (email)            { linhas.push(`EMAIL:${sanitizar(email)}`); }
-    if (organizacao)      { linhas.push(`ORG:${sanitizar(organizacao)}`); }
-    if (cargo)            { linhas.push(`TITLE:${sanitizar(cargo)}`); }
-    if (endereco)         { linhas.push(`ADR:;;${sanitizar(endereco)};;;;`); }
-    if (site)             { linhas.push(`URL:${sanitizar(site)}`); }
+    if (telefone != null) { linhas.push(`TEL:${vc(paraString(telefone))}`); }
+    if (email)            { linhas.push(`EMAIL:${vc(email)}`); }
+    if (organizacao)      { linhas.push(`ORG:${vc(organizacao)}`); }
+    if (cargo)            { linhas.push(`TITLE:${vc(cargo)}`); }
+    if (endereco)         { linhas.push(`ADR:;;${vc(endereco)};;;;`); }
+    if (site)             { linhas.push(`URL:${vc(site)}`); }
 
     linhas.push('END:VCARD');
     return linhas.join('\n');
