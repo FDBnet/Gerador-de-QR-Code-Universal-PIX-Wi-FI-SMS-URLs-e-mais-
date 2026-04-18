@@ -1,5 +1,5 @@
 /**
- * gerarQrCode.js — v2.2.0
+ * gerarQrCode.js — v2.2.1
  *
  * Gerador de QR Code Universal
  * Suporta: PIX (estático / dinâmico), Wi-Fi (WPA / WPA2 / WPA3),
@@ -14,6 +14,10 @@
  *   • WPA3 Specification v3.2 — Wi-Fi Alliance, §7.1 URI format
  *   • vCard 3.0 — RFC 2426
  *   • Plano de Numeração Brasileiro — ANATEL Resolução 709/2020
+ *
+ * Changelog v2.2.1 (vs v2.2.0):
+ *   Somente atualização de documentação (README.md, gerarQrCode.d.ts).
+ *   Código e testes idênticos a v2.2.0.
  *
  * Changelog v2.2.0 (vs v2.1.1) — correções de raiz, sem patches:
  *   [FIX-13]  escaparWiFi: aspa simples removida do regex (fora WPA3 §7.1).

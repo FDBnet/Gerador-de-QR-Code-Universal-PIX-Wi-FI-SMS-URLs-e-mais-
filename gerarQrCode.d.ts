@@ -1,6 +1,13 @@
 /**
- * gerarQrCode.js — v2.1.0
+ * gerarQrCode.js — v2.2.1
  * Gerador de QR Code Universal
+ *
+ * Referências normativas:
+ *   • Manual BR Code — BCB v2.0.1
+ *   • EMV QRCPS-MPM v1.1
+ *   • vCard 3.0 — RFC 2426
+ *   • WPA3 Specification v3.2 — Wi-Fi Alliance §7.1
+ *   • Plano de Numeração Brasileiro — ANATEL Res. 709/2020
  */
 
 export interface OpcoesQR {
@@ -27,12 +34,20 @@ export interface DadosPixEstatico {
     chave: string;
     beneficiario?: string;
     cidade?: string;
+    /**
+     * Valor da transação. Aceita number positivo, 0 (pagador informa),
+     * string vazia ou omitido. NaN ou negativo lançam Error.
+     */
     valor?: number | string;
     identificador?: string;
     descricao?: string;
 }
 
 export interface DadosPixDinamico {
+    /**
+     * URL do location. Máximo 77 caracteres — imposto pelo campo 26 EMV
+     * (99 chars total menos overhead TLV). URL maior lança Error.
+     */
     url: string;
     beneficiario?: string;
     cidade?: string;
@@ -103,19 +118,36 @@ export interface ResultadoValidacaoPayload {
 /** Gera um QR Code em um elemento HTML. */
 export function gerarQRCode(config: ConfigQRCode): Promise<boolean>;
 
-/** Formata dados PIX em payload EMV (Pix Copia e Cola). */
+/**
+ * Formata dados PIX em payload EMV (Pix Copia e Cola).
+ * @throws Error se chave inválida, URL > 77 chars (dinâmico),
+ *         valor NaN ou negativo, ou qualquer campo TLV > 99 chars.
+ */
 export function formatarPix(dados: DadosPix): string;
 
-/** Formata dados WiFi em string WIFI:... */
+/**
+ * Formata dados WiFi em string WIFI:...
+ * Escape conforme WPA3 §7.1 / ZXing: \ ; , : "
+ * @throws Error se nomeRede ausente ou senha ausente em rede protegida.
+ */
 export function formatarWiFi(dados: DadosWiFi | string): string;
 
-/** Formata dados de contato em vCard 3.0. */
+/**
+ * Formata dados de contato em vCard 3.0.
+ * Caracteres especiais (; , \ newline) escapados conforme RFC 2426 §4.
+ * @throws Error se nome ausente ou dados não-objeto.
+ */
 export function formatarContato(dados: DadosContato): string;
 
 /** Valida chave PIX (CPF, CNPJ, e-mail, telefone ou EVP) com detecção automática. */
 export function validarChavePix(chave: string): ResultadoValidacaoChave;
 
-/** Detecta automaticamente o tipo de chave PIX. */
+/**
+ * Detecta automaticamente o tipo de chave PIX.
+ * Telefone segue Plano de Numeração Brasileiro (ANATEL Res. 709/2020):
+ * DDD ∈ [11-99]; celular de 11 dígitos com 9 obrigatório na posição 3;
+ * fixo de 10 dígitos com primeiro dígito ∈ [2-9].
+ */
 export function detectarTipoChave(chave: string): TipoChavePix | null;
 
 /** Decodifica payload PIX EMV em objeto estruturado. */

@@ -4,7 +4,11 @@ PIX (estático/dinâmico) · Wi-Fi (WPA2/WPA3) · URL · E-mail · Telefone · S
 
 JavaScript puro (ES6+). Zero frameworks. Uma dependência ([qrcode](https://www.npmjs.com/package/qrcode)).
 
-> **v2.1.0** — Validação de chave PIX (CPF/CNPJ/email/tel/EVP com dígitos verificadores), detecção automática de tipo, decodificador EMV, normalização para campo 26-01, validação de payload. 83 testes automatizados.
+> **v2.2.1** — Documentação corrigida (README e `.d.ts` alinhados à v2.2.0). Código idêntico a v2.2.0.
+>
+> **v2.2.0** — Correções de raiz: `tlv()` valida length ≤ 99 (EMV QRCPS-MPM §4.3), `formatarContato` escapa conforme RFC 2426 §4, `validarTelefonePix` reescrito com Plano de Numeração Brasileiro (ANATEL Res. 709/2020), PIX rejeita valor NaN/negativo, escape WiFi alinhado a WPA3 §7.1. Testes passaram a importar o módulo real (antes reimplementavam inline). **98 testes**.
+>
+> **v2.1.0** — Validação de chave PIX (CPF/CNPJ/email/tel/EVP com dígitos verificadores), detecção automática de tipo, decodificador EMV, normalização para campo 26-01, validação de payload.
 
 ## Instalação
 
@@ -71,6 +75,8 @@ A chave PIX aceita qualquer formato de entrada e normaliza automaticamente:
 
 Chave inválida (CPF com dígitos errados, formato não reconhecido) lança erro antes de gerar o QR Code.
 
+O campo `valor` aceita `number` positivo, `0` (pagador informa), string vazia ou omitido. `NaN` e negativos lançam `Error` explícito — nunca são descartados silenciosamente.
+
 ### PIX Dinâmico (URL)
 
 ```javascript
@@ -84,6 +90,8 @@ await gerarQRCode({
     }
 });
 ```
+
+> ⚠️ **Limite de URL: 77 caracteres.** Imposto pela spec EMV: o campo 26 (Merchant Account Information) tem no máximo 99 chars de conteúdo; desses, 18 são consumidos pelo GUI `BR.GOV.BCB.PIX` e 4 pelo overhead TLV da URL. Sobram 77 para a URL. URLs maiores lançam `Error` antes de gerar o QR Code — EMV QRCPS-MPM §4.3.
 
 ### PIX com payload EMV pronto
 
@@ -165,6 +173,8 @@ await gerarQRCode({
 });
 ```
 
+> **Nota sobre chaves PIX do tipo telefone**: `detectarTipoChave` e `validarChavePix` aplicam o Plano de Numeração Brasileiro (ANATEL Res. 709/2020): DDD ∈ [11-99], celular de 11 dígitos exige 9 na terceira posição, fixo de 10 dígitos exige primeiro dígito em [2-9]. Entradas fora dessa estrutura retornam `null`/erro em vez de ser aceitas silenciosamente.
+
 ### Contato (vCard 3.0)
 
 ```javascript
@@ -182,6 +192,8 @@ await gerarQRCode({
     }
 });
 ```
+
+Caracteres especiais em qualquer valor (`;`, `,`, `\`, newline) são escapados automaticamente conforme **RFC 2426 §4**. Nomes como `"Silva; Rodrigo"` ou endereços com vírgulas são preservados corretamente no parser de contatos de iOS, Android e Outlook.
 
 ### Texto livre
 
@@ -225,7 +237,7 @@ const resultado = validarChavePix('529.982.247-25');
 // }
 
 const invalida = validarChavePix('12345678900');
-// { valida: false, tipo: null, erro: 'Chave PIX "12345678900" não corresponde...' }
+// { valida: false, tipo: null, erro: 'Chave PIX "12345678900" não corresponde a nenhum formato válido...' }
 ```
 
 ### Detectar tipo de chave
@@ -357,7 +369,7 @@ const opcoes = {
 node teste_integridade.mjs
 ```
 
-83 testes cobrindo: validação CPF/CNPJ/email/telefone/EVP, detecção automática de tipo, normalização de chave, geração e decodificação de payload EMV, validação de CRC16, roundtrip (gerar → decodificar → comparar), WiFi WPA2/WPA3, vCard, sanitização, edge cases.
+98 testes cobrindo: validação CPF/CNPJ/email/telefone/EVP, detecção automática de tipo, normalização de chave, geração e decodificação de payload EMV, validação de CRC16, roundtrip (gerar → decodificar → comparar), WiFi WPA2/WPA3, vCard com escape RFC 2426, sanitização, edge cases, e seção dedicada de **regressão dos bugs corrigidos em v2.2.0** (FIX-13..18). Os testes importam o módulo real (antes reimplementavam a lógica inline).
 
 ## Compatibilidade
 
@@ -373,6 +385,7 @@ node teste_integridade.mjs
 - [WPA3 Specification v3.2 — Wi-Fi Alliance](https://www.wi-fi.org/system/files/WPA3%20Specification%20v3.2.pdf)
 - [EMV QRCPS-MPM v1.1](https://www.emvco.com/emv-technologies/qrcodes/)
 - [vCard 3.0 — RFC 2426](https://www.rfc-editor.org/rfc/rfc2426)
+- [Plano de Numeração Brasileiro — ANATEL Res. 709/2020](https://www.gov.br/anatel/pt-br/regulado/numeracao/plano-de-numeracao-brasileiro)
 
 ## Licença
 

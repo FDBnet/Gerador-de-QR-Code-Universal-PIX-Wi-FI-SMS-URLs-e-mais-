@@ -3,6 +3,25 @@
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [2.2.1] — 2026-04-18
+
+### Documentação
+
+Release **somente de documentação**. Código `gerarQrCode.js` e testes são idênticos à v2.2.0.
+
+- **README.md** atualizado:
+  - Badge de versão + resumo refletindo v2.2.0 (correções de raiz) e contagem de testes (98, era 83).
+  - Seção PIX Dinâmico documenta limite de **77 caracteres** na URL (imposto pelo campo 26 EMV).
+  - Seção PIX Estático documenta validação estrita de `valor` (NaN e negativos lançam erro explícito).
+  - Seção Contato documenta escape RFC 2426 §4 aplicado automaticamente (nomes com `;` ou `,` funcionam).
+  - Seção Telefone/SMS explica validação conforme Plano de Numeração Brasileiro (ANATEL Res. 709/2020).
+  - Referências normativas incluem ANATEL Res. 709/2020.
+- **gerarQrCode.d.ts** atualizado:
+  - Header de versão alinhado a v2.2.1.
+  - JSDoc `@throws` em `formatarPix`, `formatarWiFi`, `formatarContato` documentando condições de erro.
+  - Comentários de interface para `DadosPixEstatico.valor` (aceita 0/'' mas rejeita NaN/negativo) e `DadosPixDinamico.url` (máx 77 chars).
+  - Nota em `detectarTipoChave` sobre regras ANATEL.
+
 ## [2.2.0] — 2026-04-18
 
 Versão focada em correções de **raiz** (sem patches), identificadas por análise adversarial contra o módulo real. Todas validadas por testes de regressão dedicados.
