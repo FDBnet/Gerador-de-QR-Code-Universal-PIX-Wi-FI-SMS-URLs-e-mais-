@@ -384,4 +384,4 @@ MIT — veja [LICENSE](LICENSE).
 
 ---
 
-Feito por [Rodrigo S. Magalhães](https://github.com/FDBnet)
+Feito por [Rodrigo S. Magalhães](https://github.com/FDBnet) em FDBnet.
